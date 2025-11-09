@@ -4,6 +4,7 @@
 package wallpaper
 
 import (
+	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
@@ -37,7 +38,16 @@ func Get() (string, error) {
 // SetFromFile sets wallpaper from a file path.
 func SetFromFile(file string, _ ...int) error {
 	if isGNOMECompliant() {
-		return exec.Command("gsettings", "set", "org.gnome.desktop.background", "picture-uri", strconv.Quote("file://"+file)).Run()
+		err := exec.Command("gsettings", "set", "org.gnome.desktop.background", "picture-uri", strconv.Quote("file://"+file)).Run()
+		if err != nil {
+			return err
+		}
+		// Check if a separate dark mode background URI is available and set it too
+		out, err := parseDconf("gsettings", "writable", "org.gnome.desktop.background", "picture-uri-dark")
+		if err == nil && out == "true" {
+			return exec.Command("gsettings", "set", "org.gnome.desktop.background", "picture-uri-dark", strconv.Quote("file://"+file)).Run()
+		}
+		return err
 	}
 
 	switch Desktop {
@@ -54,10 +64,23 @@ func SetFromFile(file string, _ ...int) error {
 	case "Deepin":
 		return exec.Command("dconf", "write", "/com/deepin/wrap/gnome/desktop/background/picture-uri", strconv.Quote("file://"+file)).Run()
 	default:
-		err := exec.Command("swaybg", "-i", file).Start()
-		// if the command completed successfully, return
-		if err == nil {
-			return nil
+		if os.Getenv("WAYLAND_DISPLAY") != "" {
+
+			// Search for existing swww sockets which might indicate the user prefers it to swaybg
+			swwSock := os.Getenv("XDG_RUNTIME_DIR") + "/swww-" + os.Getenv("WAYLAND_DISPLAY") + ".socket"
+
+			if _, err := os.Stat(swwSock); err == nil {
+				err := exec.Command("swww", "img", file).Start()
+				if err == nil {
+					return nil
+				}
+			}
+
+			err := exec.Command("swaybg", "-i", file).Start()
+			// if the command completed successfully, return
+			if err == nil {
+				return nil
+			}
 		}
 
 		return exec.Command("feh", "-bg-fill", file).Run()
